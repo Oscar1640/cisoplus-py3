@@ -1,4 +1,5 @@
 # CISO Plus
+cisoplus for Python 3
 ## Converting PSP ISO file to compressed CSO format
 
 The code is mainly based on two projects:  
