@@ -1,20 +1,27 @@
 #!/usr/bin/env python2.7
 
 from __future__ import print_function
+from __future__ import division
+from future import standard_library
+standard_library.install_aliases()
+from builtins import chr
+from builtins import range
+from builtins import object
+from past.utils import old_div
 import os
 import struct
 import sys
 import zlib
-import urllib
+import urllib.request, urllib.parse, urllib.error
 import pprint
 import array
 from itertools import chain
 import os.path
 
 try:
-	from cStringIO import StringIO
+	from io import BytesIO
 except ImportError:
-	from StringIO import StringIO
+	from io import BytesIO
 
 CISO_MAGIC = 0x4F534943 # CISO
 CISO_HEADER_SIZE = 0x18 # 24
@@ -161,15 +168,15 @@ class ISO9660(object):
 				if length < SECTOR_SIZE:
 					continue
 				if f.upper() in self._vaccum_file:
-					self._vaccum_block.append((start_sec, start_sec+length/SECTOR_SIZE-1))
+					self._vaccum_block.append((start_sec, start_sec+old_div(length,SECTOR_SIZE)-1))
 					continue
 				start = start_sec * SECTOR_SIZE
 				fh.seek(start)
-				self._buff = StringIO(fh.read(length))
+				self._buff = BytesIO(fh.read(length))
 				if self._unpack_raw(header_size) in \
 						(self.PMF_HEADER, self.AT3_HEADER, self.PNG_HEADER):
 					self._media_file.append(f)
-					self._media_block.append((start_sec, start_sec+length/SECTOR_SIZE+1))
+					self._media_block.append((start_sec, start_sec+old_div(length,SECTOR_SIZE)+1))
 					self._media_pos.append((start, start+length))
 
 	def get_file(self, path):
@@ -185,7 +192,7 @@ class ISO9660(object):
 		start = sector * SECTOR_SIZE
 		if self._buff:
 			self._buff.close()
-		opener = urllib.FancyURLopener()
+		opener = urllib.request.FancyURLopener()
 		opener.http_error_206 = lambda *a, **k: None
 		opener.addheader("Range", "bytes=%d-%d" % (start, start+length-1))
 		self._buff = opener.open(self._url)
@@ -193,7 +200,7 @@ class ISO9660(object):
 	def _get_sector_file(self, sector, length):
 		with open(self._url, 'rb') as f:
 			f.seek(sector*SECTOR_SIZE)
-			self._buff = StringIO(f.read(length))
+			self._buff = BytesIO(f.read(length))
 
 	##
 	## Return the record for final directory in a path
@@ -339,7 +346,7 @@ class ISO9660(object):
 		return a
 
 	def _unpack_string(self, l):
-		return self._buff.read(l).rstrip(' ')
+		return self._buff.read(l).decode().rstrip(' ')
 
 	def _unpack(self, st):
 		if st[0] not in ('<','>'):
@@ -387,7 +394,7 @@ def parse_header_info(header_data):
 			'block_size': block_size,
 			'ver': ver,
 			'align': align,
-			'total_blocks': int(total_bytes / block_size),
+			'total_blocks': int(old_div(total_bytes, block_size)),
 			}
 		ciso['index_size'] = (ciso['total_blocks'] + 1) * 4
 	else:
@@ -413,7 +420,7 @@ def decompress_cso(infile, outfile):
 			# Print some info before we start
 			print("Decompressing '{}' to '{}'".format(
 				infile, outfile))
-			for k, v in ciso.items():
+			for k, v in list(ciso.items()):
 				print("{}: {}".format(k, v))
 
 			# Get the block index
@@ -421,7 +428,7 @@ def decompress_cso(infile, outfile):
 					for i in
 					range(0, ciso['total_blocks'] + 1)]
 
-			percent_period = ciso['total_blocks'] / 100
+			percent_period = old_div(ciso['total_blocks'], 100)
 			percent_cnt = 0
 
 			for block in range(0, ciso['total_blocks']):
@@ -455,9 +462,9 @@ def decompress_cso(infile, outfile):
 				fout.write(decompressed_data)
 
 				# Progress bar
-				percent = int(round((block / (ciso['total_blocks'] + 1)) * 100))
+				percent = int(round((old_div(block, (ciso['total_blocks'] + 1))) * 100))
 				if percent > percent_cnt:
-					update_progress((block / (ciso['total_blocks'] + 1)))
+					update_progress((old_div(block, (ciso['total_blocks'] + 1))))
 					percent_cnt = percent
 		# close infile
 	# close outfile
@@ -471,7 +478,7 @@ def check_file_size(f):
 			'ver': 1,
 			'block_size': CISO_BLOCK_SIZE,
 			'total_bytes': file_size,
-			'total_blocks': int(file_size / CISO_BLOCK_SIZE),
+			'total_blocks': int(old_div(file_size, CISO_BLOCK_SIZE)),
 			'align': 0,
 			}
 	f.seek(0, os.SEEK_SET)
@@ -504,7 +511,7 @@ def compress_iso(infile, outfile, compression_level, nocom_ranges=[], vaccum_ran
 				infile, outfile))
 
 			ciso = check_file_size(fin)
-			for k, v in ciso.items():
+			for k, v in list(ciso.items()):
 				print("{}: {}".format(k, v))
 			print("compress level: {}".format(compression_level))
 
@@ -522,17 +529,17 @@ def compress_iso(infile, outfile, compression_level, nocom_ranges=[], vaccum_ran
 			alignment_buffer = struct.pack('<B', 0x00) * 64
 
 			# Progress counters
-			percent_period = ciso['total_blocks'] / 100
+			percent_period = old_div(ciso['total_blocks'], 100)
 			percent_cnt = 0
 
 			nocom_array = array.array('B')
-			nocom_array.fromstring(struct.pack('{0}x'.format(ciso['total_blocks'])))
-			for i in chain(*(xrange(a, b) for a,b in nocom_ranges)):
+			nocom_array.frombytes(struct.pack('{0}x'.format(ciso['total_blocks'])))
+			for i in chain(*(range(a, b) for a,b in nocom_ranges)):
 				try:
 					nocom_array[i] = 1
 				except IndexError:
 					pass
-			for i in chain(*(xrange(a, b) for a,b in vaccum_ranges)):
+			for i in chain(*(range(a, b) for a,b in vaccum_ranges)):
 				try:
 					nocom_array[i] = 2
 				except IndexError:
@@ -587,9 +594,9 @@ def compress_iso(infile, outfile, compression_level, nocom_ranges=[], vaccum_ran
 				fout.write(writable_data)
 
 				# Progress bar
-				percent = int(round((block / (ciso['total_blocks'] + 1)) * 100))
+				percent = int(round((old_div(block, (ciso['total_blocks'] + 1))) * 100))
 				if percent > percent_cnt:
-					update_progress((block / (ciso['total_blocks'] + 1)))
+					update_progress((old_div(block, (ciso['total_blocks'] + 1))))
 					percent_cnt = percent
 
 			# end for block
